@@ -1,0 +1,500 @@
+// =============================================================================
+// מערכת הערכת עובדים – Employee Performance Review System
+// Prisma ORM 7 · PostgreSQL
+//
+// חיבור למסד הנתונים מוגדר ב-prisma.config.ts (datasource.url ← DATABASE_URL).
+// הלקוח המחולל נכתב ל-src/generated/prisma ומיובא מ-"@/generated/prisma/client".
+// =============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+/// תפקיד מערכת (RBAC)
+enum Role {
+  ADMIN // מנהל מערכת / HR
+  MANAGER // מנהל ישיר
+  EMPLOYEE // עובד
+}
+
+/// מצב מחזור הערכה
+enum CycleStatus {
+  DRAFT // נוצר, טרם נפתח לעובדים
+  ACTIVE // פתוח – מיילי פתיחה נשלחו
+  CLOSED // נסגר ע"י HR – קריאה בלבד
+}
+
+/// מכונת המצבים של הערכת עובד בודד במחזור
+enum EvaluationStatus {
+  NOT_STARTED // טרם התחיל
+  EMPLOYEE_IN_PROGRESS // בטיפול עובד
+  EMPLOYEE_COMPLETED // הושלם ע"י עובד
+  MANAGER_IN_PROGRESS // בטיפול מנהל
+  MANAGER_COMPLETED // הושלם ע"י מנהל – נפתחת השוואה
+  WAITING_FOR_FEEDBACK_MEETING // ממתין לשיחת משוב
+  COMPLETED // הושלם סופית
+  ARCHIVED // ארכיון – לאחר סגירת מחזור
+}
+
+/// מצב שאלון של צד אחד (עובד / מנהל). SUBMITTED = נעול לעריכה.
+enum AssessmentStatus {
+  NOT_STARTED
+  DRAFT
+  SUBMITTED
+}
+
+/// מי ענה על השאלה
+enum Respondent {
+  EMPLOYEE
+  MANAGER
+}
+
+enum QuestionType {
+  RATING // ציון 1–5
+  OPEN_TEXT // שאלה פתוחה
+}
+
+/// לאיזה צד מוצגת השאלה
+enum QuestionAudience {
+  EMPLOYEE
+  MANAGER
+  BOTH
+}
+
+enum FeedbackMeetingStatus {
+  SCHEDULED // נקבע מועד
+  DRAFT // סיכום בכתיבה
+  APPROVED // המנהל אישר – גלוי לעובד
+  ACKNOWLEDGED // העובד אישר קריאה
+}
+
+enum GoalStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  ACHIEVED
+  PARTIALLY_ACHIEVED
+  NOT_ACHIEVED
+  CANCELLED
+}
+
+enum NotificationType {
+  CYCLE_OPENED // יום 0 – לעובד
+  EMPLOYEE_REMINDER_1 // יום 4 – לעובד
+  EMPLOYEE_REMINDER_2 // יום 7 – לעובד
+  EMPLOYEE_SUBMITTED // יום 0 – למנהל: "עובד השלים הערכה עצמית"
+  MANAGER_REMINDER_1 // יום 4 מהשלמת העובד
+  MANAGER_REMINDER_2 // יום 7 מהשלמת העובד
+  ASSESSMENTS_COMPLETED // "הערכות הושלמו - יש לתאם שיחת משוב"
+  FEEDBACK_MEETING_REMINDER
+  FEEDBACK_APPROVED // סיכום השיחה זמין לעובד
+  CYCLE_CLOSED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  ROLE_CHANGED
+  MANAGER_ASSIGNED
+  EMPLOYEES_IMPORTED
+  QUESTIONNAIRE_CREATED
+  QUESTIONNAIRE_UPDATED
+  CYCLE_CREATED
+  CYCLE_OPENED
+  CYCLE_CLOSED
+  SELF_ASSESSMENT_SAVED
+  SELF_ASSESSMENT_SUBMITTED
+  MANAGER_ASSESSMENT_SAVED
+  MANAGER_ASSESSMENT_SUBMITTED
+  COMPARISON_VIEWED
+  FEEDBACK_MEETING_SCHEDULED
+  FEEDBACK_SAVED
+  FEEDBACK_APPROVED
+  FEEDBACK_ACKNOWLEDGED
+  GOAL_CREATED
+  GOAL_UPDATED
+  GOAL_DELETED
+  EVALUATION_COMPLETED
+  REMINDERS_TRIGGERED
+  REPORT_VIEWED
+  REPORT_EXPORTED
+  ACCESS_DENIED
+}
+
+// =============================================================================
+// מבנה ארגוני
+// =============================================================================
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+
+  @@map("departments")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  /// מזהה עובד ארגוני (Employee ID)
+  employeeNumber String    @unique
+  fullName       String
+  email          String    @unique
+  jobTitle       String
+  hireDate       DateTime  @db.Date
+  role           Role      @default(EMPLOYEE)
+  isActive       Boolean   @default(true)
+  /// Object ID של המשתמש ב-Microsoft Entra ID (מתמלא בהתחברות הראשונה)
+  entraObjectId  String?   @unique
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  /// מנהל ישיר (קשר עצמי)
+  managerId     String?
+  manager       User?   @relation("ReportingLine", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports User[]  @relation("ReportingLine")
+
+  evaluationsAsEmployee Evaluation[]      @relation("EvaluationEmployee")
+  evaluationsAsManager  Evaluation[]      @relation("EvaluationManager")
+  answersGiven          Answer[]          @relation("AnswerAuthor")
+  goals                 Goal[]            @relation("GoalOwner")
+  goalsCreated          Goal[]            @relation("GoalCreator")
+  feedbackAuthored      FeedbackMeeting[] @relation("FeedbackAuthor")
+  cyclesCreated         ReviewCycle[]     @relation("CycleCreator")
+  cyclesClosed          ReviewCycle[]     @relation("CycleCloser")
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+
+  @@index([managerId])
+  @@index([departmentId])
+  @@index([role, isActive])
+  @@map("users")
+}
+
+// =============================================================================
+// שאלונים – גרסה לכל מחזור, ללא פגיעה בהיסטוריה
+// תבנית שמשויכת למחזור ננעלת (isLocked); שינוי = גרסה חדשה.
+// =============================================================================
+
+model QuestionnaireTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  version     Int
+  description String?
+  isLocked    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  categories Category[]
+  questions  Question[]
+  cycles     ReviewCycle[]
+
+  @@unique([name, version])
+  @@map("questionnaire_templates")
+}
+
+model Category {
+  id     String @id @default(cuid())
+  /// מפתח יציב להשוואה בין מחזורים (PROFESSIONAL, ACCOUNTABILITY, ...)
+  key    String
+  name   String
+  nameEn String
+  /// משקל באחוזים (סכום הקטגוריות בתבנית = 100)
+  weight Int
+  order  Int
+
+  templateId String
+  template   QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  questions Question[]
+
+  @@unique([templateId, key])
+  @@index([templateId, order])
+  @@map("categories")
+}
+
+model Question {
+  id         String           @id @default(cuid())
+  text       String
+  helpText   String?
+  type       QuestionType
+  audience   QuestionAudience @default(BOTH)
+  isRequired Boolean          @default(true)
+  order      Int
+
+  templateId String
+  template   QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  /// חובה לשאלות RATING; null לשאלות פתוחות כלליות
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  answers Answer[]
+
+  @@index([templateId, order])
+  @@index([categoryId])
+  @@map("questions")
+}
+
+// =============================================================================
+// מחזור הערכה
+// =============================================================================
+
+model ReviewCycle {
+  id                       String      @id @default(cuid())
+  name                     String
+  year                     Int
+  status                   CycleStatus @default(DRAFT)
+  startDate                DateTime    @db.Date
+  selfAssessmentDueDate    DateTime    @db.Date
+  managerAssessmentDueDate DateTime    @db.Date
+  endDate                  DateTime    @db.Date
+  openedAt                 DateTime?
+  closedAt                 DateTime?
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+
+  templateId String
+  template   QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  createdById String
+  createdBy   User    @relation("CycleCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  closedById  String?
+  closedBy    User?   @relation("CycleCloser", fields: [closedById], references: [id], onDelete: SetNull)
+
+  evaluations   Evaluation[]
+  goals         Goal[]
+  notifications Notification[]
+
+  @@unique([name, year])
+  @@index([status])
+  @@map("review_cycles")
+}
+
+// =============================================================================
+// הערכת עובד במחזור (רשומה אחת לכל עובד בכל מחזור)
+// =============================================================================
+
+model Evaluation {
+  id     String           @id @default(cuid())
+  status EvaluationStatus @default(NOT_STARTED)
+
+  cycleId String
+  cycle   ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+
+  employeeId String
+  employee   User   @relation("EvaluationEmployee", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  /// המנהל המעריך – צילום מצב בעת פתיחת המחזור (שומר היסטוריה גם אם המבנה הארגוני משתנה)
+  managerId String
+  manager   User   @relation("EvaluationManager", fields: [managerId], references: [id], onDelete: Restrict)
+
+  // --- הערכה עצמית ---
+  employeeStatus        AssessmentStatus @default(NOT_STARTED)
+  employeeStartedAt     DateTime?
+  employeeSubmittedAt   DateTime?
+  /// ציון משוקלל 1.00–5.00. אסור להחזיר למנהל לפני managerStatus = SUBMITTED.
+  employeeWeightedScore Decimal?         @db.Decimal(4, 2)
+
+  // --- הערכת מנהל ---
+  managerStatus        AssessmentStatus @default(NOT_STARTED)
+  managerStartedAt     DateTime?
+  managerSubmittedAt   DateTime?
+  managerWeightedScore Decimal?         @db.Decimal(4, 2)
+
+  /// מועד פתיחת הדוח ההשוואתי (= managerSubmittedAt כששני הצדדים הגישו)
+  comparisonUnlockedAt DateTime?
+  /// סימון "פוטנציאל גבוה" ע"י המנהל (לדוח High-Potential)
+  isHighPotential      Boolean   @default(false)
+  completedAt          DateTime?
+  archivedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  answers         Answer[]
+  feedbackMeeting FeedbackMeeting?
+  goals           Goal[]
+  notifications   Notification[]
+
+  @@unique([cycleId, employeeId])
+  @@index([managerId, cycleId])
+  @@index([cycleId, status])
+  @@index([employeeId])
+  @@map("evaluations")
+}
+
+/// תשובה לשאלה – שורה נפרדת לעובד ולמנהל.
+/// ב-DAL למנהל: סינון respondent = EMPLOYEE חובה כל עוד managerStatus != SUBMITTED.
+model Answer {
+  id         String     @id @default(cuid())
+  respondent Respondent
+  /// 1–5 עבור RATING
+  score      Int?       @db.SmallInt
+  /// תשובה חופשית עבור OPEN_TEXT / הערה לציון
+  textAnswer String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  evaluationId String
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  authorId String
+  author   User   @relation("AnswerAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@unique([evaluationId, questionId, respondent])
+  @@index([evaluationId, respondent])
+  @@map("answers")
+}
+
+// =============================================================================
+// שיחת משוב
+// =============================================================================
+
+model FeedbackMeeting {
+  id                       String                @id @default(cuid())
+  status                   FeedbackMeetingStatus @default(SCHEDULED)
+  scheduledAt              DateTime?
+  location                 String?
+  heldAt                   DateTime?
+  achievements             String? // הישגים מרכזיים
+  strengths                String? // חוזקות
+  improvementAreas         String? // תחומי שיפור
+  developmentOpportunities String? // הזדמנויות פיתוח
+  summary                  String? // סיכום שיחה
+  managerComments          String? // הערות מנהל
+  employeeComments         String? // הערות העובד
+  approvedAt               DateTime?
+  employeeAcknowledgedAt   DateTime?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+
+  evaluationId String     @unique
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@map("feedback_meetings")
+}
+
+// =============================================================================
+// יעדים לשנה הבאה (3–5 לעובד, סכום משקלים 100 – נאכף בשכבת השירות)
+// =============================================================================
+
+model Goal {
+  id          String     @id @default(cuid())
+  title       String
+  description String
+  kpi         String // מדד הצלחה
+  weight      Int // אחוזים
+  dueDate     DateTime   @db.Date
+  status      GoalStatus @default(NOT_STARTED)
+  progress    Int        @default(0) // 0–100
+  order       Int
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  evaluationId String
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  /// המחזור שבו הוגדר היעד (נוח לדוח מעקב יעדים)
+  cycleId String
+  cycle   ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+
+  employeeId String
+  employee   User   @relation("GoalOwner", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  createdById String
+  createdBy   User   @relation("GoalCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, cycleId])
+  @@index([evaluationId])
+  @@index([status, dueDate])
+  @@map("goals")
+}
+
+// =============================================================================
+// התראות ומיילים (תור + יומן שליחה; dedupeKey מונע שליחה כפולה ב-Cron)
+// =============================================================================
+
+model Notification {
+  id          String             @id @default(cuid())
+  type        NotificationType
+  status      NotificationStatus @default(PENDING)
+  /// לדוגמה: "<evaluationId>:EMPLOYEE_REMINDER_1:<recipientId>"
+  dedupeKey   String             @unique
+  subject     String
+  body        String
+  scheduledAt DateTime           @default(now())
+  sentAt      DateTime?
+  attempts    Int                @default(0)
+  lastError   String?
+  createdAt   DateTime           @default(now())
+
+  recipientId String
+  recipient   User   @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  cycleId String?
+  cycle   ReviewCycle? @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+
+  evaluationId String?
+  evaluation   Evaluation? @relation(fields: [evaluationId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledAt])
+  @@index([recipientId])
+  @@index([evaluationId, type])
+  @@map("notifications")
+}
+
+// =============================================================================
+// Audit Log – רשומות append-only
+// =============================================================================
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  action     AuditAction
+  entityType String // "Evaluation" | "ReviewCycle" | "User" | ...
+  entityId   String?
+  /// פרטים נוספים (ערכים לפני/אחרי, פרמטרי דוח וכו')
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  /// null = פעולת מערכת (Cron)
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
