@@ -5,7 +5,7 @@ import { NotificationType } from "@/generated/prisma/enums";
  */
 
 export function appUrl(path = ""): string {
-  const base = (process.env.APP_URL ?? process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  const base = (process.env.APP_URL ?? process.env.RENDER_EXTERNAL_URL ?? process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
   return `${base}${path}`;
 }
 

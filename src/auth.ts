@@ -14,13 +14,20 @@ import { recordAudit } from "@/lib/dal/audit";
  *   כך ששינוי הרשאות או השבתת משתמש נכנסים לתוקף מיד.
  *
  * כניסת פיתוח (dev-login): ספק Credentials לפי אימייל, פעיל רק כאשר
- * NODE_ENV !== "production" וגם AUTH_DEV_LOGIN="true". מיועד לבדיקה עם נתוני ה-seed לפני חיבור Entra.
+ * NODE_ENV !== "production" וגם AUTH_DEV_LOGIN="true" (או במצב הדגמה DEMO_MODE="true").
+ * מיועד לבדיקה עם נתוני ה-seed לפני חיבור Entra.
  */
 
 const ENTRA_PROVIDER_ID = "microsoft-entra-id";
 const DEV_PROVIDER_ID = "dev-login";
 
-const devLoginEnabled = process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_LOGIN === "true";
+/**
+ * מצב הדגמה (DEMO_MODE="true"): כניסה לפי אימייל גם בשרת אמיתי – רק לאתר הדגמה עם נתוני דמה!
+ * אסור להפעיל באתר עם נתוני עובדים אמיתיים.
+ */
+export const demoMode = process.env.DEMO_MODE === "true";
+
+const devLoginEnabled = (process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_LOGIN === "true") || demoMode;
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;

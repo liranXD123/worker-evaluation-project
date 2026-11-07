@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 import { PageLoading } from "@/components/ui/kit";
 import { AppNav } from "@/components/app/app-nav";
+import { DemoBanner } from "@/components/app/demo-banner";
 
 /**
  * מעטפת האפליקציה למשתמשים מחוברים.
@@ -13,6 +14,9 @@ export const instant = false;
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-full flex-1 flex-col">
+      <Suspense fallback={null}>
+        <DemoBanner />
+      </Suspense>
       <header className="sticky top-0 z-20 border-b bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
           <Link href="/" className="flex items-center gap-2 font-bold">

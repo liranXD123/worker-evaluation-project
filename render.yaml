@@ -1,0 +1,39 @@
+# Render Blueprint – אתר הדגמה של מערכת הערכת עובדים
+# יוצר מסד נתונים + אתר בלחיצה אחת: Render → New → Blueprint → בחירת ה-repo.
+# ⚠️ DEMO_MODE מאפשר כניסה בלי סיסמה – רק לנתוני דמה, לעולם לא לנתונים אמיתיים.
+
+databases:
+  - name: worker-evaluation-db
+    plan: free
+    region: frankfurt
+    databaseName: performance_review
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: worker-evaluation-demo
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm run render-build
+    startCommand: npm run render-start
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: worker-evaluation-db
+          property: connectionString
+      - key: DEMO_MODE
+        value: "true"
+      - key: AUTH_TRUST_HOST
+        value: "true"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: FIELD_ENCRYPTION_KEY
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: MAIL_TRANSPORT
+        value: console
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
